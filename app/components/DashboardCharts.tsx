@@ -1,8 +1,10 @@
 import { useLoaderData } from '@remix-run/react'
+import type { TooltipItem } from 'chart.js'
 import * as React from 'react'
 import ClientChart from '~/components/charts/ClientChart'
 import { Card, CardContent, CardHeader, CardTitle } from '~/components/ui/card'
 import type { loader as dashboardLoader } from '~/routes/dashboard'
+import useSubscriptionStore from '~/store/subscriptionStore'
 import { usePreferencesStore } from '~/stores/preferences'
 
 function lastSixMonthLabels(): string[] {
@@ -20,25 +22,19 @@ export default function DashboardCharts() {
   // Access rates from the dashboard route loader (type-only import avoids runtime cycle)
   const { rates } = useLoaderData<typeof dashboardLoader>()
   const { selectedCurrency } = usePreferencesStore()
+  const subscriptions = useSubscriptionStore((s) => s.subscriptions)
 
-  // Mock base data is in INR
-  const subscriptionData = [
-    { name: 'Netflix', amount: 649 },
-    { name: 'Spotify', amount: 119 },
-    { name: 'Adobe CC', amount: 1599 },
-    { name: 'GitHub', amount: 400 },
-    { name: 'Google One', amount: 650 },
-  ]
-
-  // Compute conversion factor from INR -> selectedCurrency using USD-based rates:
-  // valueInSelected = valueInINR * (rate[selected] / rate[INR])
-  const conversionFactor = React.useMemo(() => {
-    if (!rates) return 1
-    const inr = rates['INR']
-    const target = rates[selectedCurrency] || 1
-    if (!inr || !target) return 1
-    return target / inr
-  }, [rates, selectedCurrency])
+  // Helper to convert an amount from a given currency -> selectedCurrency using rates with USD base
+  const convertToSelected = React.useCallback(
+    (amount: number, fromCurrency: string) => {
+      if (!rates) return amount
+      const fromRate = rates[fromCurrency] ?? 1
+      const targetRate = rates[selectedCurrency] ?? 1
+      if (!fromRate || !targetRate) return amount
+      return amount * (targetRate / fromRate)
+    },
+    [rates, selectedCurrency],
+  )
 
   const formatCurrency = React.useCallback(
     (value: number) => {
@@ -49,23 +45,65 @@ export default function DashboardCharts() {
           maximumFractionDigits: 0,
         }).format(value)
       } catch {
-        // Fallback with ISO code prefix
         return `${selectedCurrency} ${value}`
       }
     },
     [selectedCurrency],
   )
 
-  const pieLabels = subscriptionData.map((s) => s.name)
-  const pieValuesConverted = subscriptionData.map((s) => s.amount * conversionFactor)
+  // Build pie chart data from real subscriptions (aggregate by name)
+  const pieAggregation = React.useMemo(() => {
+    const map = new Map<string, number>()
+    for (const sub of subscriptions) {
+      const converted = convertToSelected(sub.price, sub.currency)
+      map.set(sub.name, (map.get(sub.name) || 0) + converted)
+    }
+    const labels: string[] = []
+    const values: number[] = []
+    for (const [name, value] of map.entries()) {
+      labels.push(name)
+      values.push(value)
+    }
+    return { labels, values }
+  }, [subscriptions, convertToSelected])
+
+  // Historical mock totals (base INR) - keep for previous months, replace latest with current total
+  const barLabels = lastSixMonthLabels()
+  const barValuesINR = [4200, 4380, 4120, 4590, 4720, 4610]
+  const inrToSelectedFactor = React.useMemo(() => {
+    if (!rates) return 1
+    const baseCurrency = 'INR' as const
+    const inr = rates[baseCurrency] ?? 1
+    const target = rates[selectedCurrency] ?? 1
+    if (!inr || !target) return 1
+    return target / inr
+  }, [rates, selectedCurrency])
+
+  const historicalConverted = React.useMemo(
+    () => barValuesINR.map((v) => v * inrToSelectedFactor),
+    [barValuesINR, inrToSelectedFactor],
+  )
+
+  // Current total (sum of subscriptions converted to selected currency)
+  const currentTotal = React.useMemo(() => {
+    return subscriptions.reduce((acc, sub) => acc + convertToSelected(sub.price, sub.currency), 0)
+  }, [subscriptions, convertToSelected])
+
+  // Replace latest historical value with current total while keeping earlier months mock data
+  const barValues = React.useMemo(() => {
+    const copy = [...historicalConverted]
+    if (copy.length === 0) return [currentTotal]
+    copy[copy.length - 1] = currentTotal
+    return copy
+  }, [historicalConverted, currentTotal])
 
   const pieData = {
-    labels: pieLabels,
+    labels: pieAggregation.labels,
     datasets: [
       {
         label: 'Monthly Expense',
-        data: pieValuesConverted,
-        backgroundColor: ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6'],
+        data: pieAggregation.values,
+        backgroundColor: ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#06b6d4', '#a78bfa'],
         hoverOffset: 8,
       },
     ],
@@ -79,7 +117,7 @@ export default function DashboardCharts() {
       },
       tooltip: {
         callbacks: {
-          label: (ctx: any) => {
+          label: (ctx: TooltipItem<'pie'>) => {
             const raw = Number(ctx.parsed)
             return `${ctx.label}: ${formatCurrency(raw)}`
           },
@@ -88,17 +126,12 @@ export default function DashboardCharts() {
     },
   }
 
-  // Mock: last 6 months totals (base INR), then convert
-  const barLabels = lastSixMonthLabels()
-  const barValuesINR = [4200, 4380, 4120, 4590, 4720, 4610]
-  const barValuesConverted = barValuesINR.map((v) => v * conversionFactor)
-
   const barData = {
     labels: barLabels,
     datasets: [
       {
         label: 'Total per month',
-        data: barValuesConverted,
+        data: barValues,
         backgroundColor: '#3b82f6',
         borderRadius: 6,
         barPercentage: 0.6,
@@ -112,8 +145,10 @@ export default function DashboardCharts() {
       legend: { display: false },
       tooltip: {
         callbacks: {
-          label: (ctx: any) => {
-            const raw = Number(ctx.parsed.y)
+          label: (ctx: TooltipItem<'bar'>) => {
+            const parsed = ctx.parsed
+            const raw =
+              typeof parsed === 'number' ? parsed : typeof parsed === 'object' && parsed !== null ? (parsed.y ?? 0) : 0
             return ` ${formatCurrency(raw)}`
           },
         },
@@ -143,7 +178,7 @@ export default function DashboardCharts() {
           <CardTitle>Monthly expenses by subscription</CardTitle>
         </CardHeader>
         <CardContent className="h-[300px]">
-          <ClientChart type="pie" data={pieData as any} options={pieOptions as any} className="h-full w-full" />
+          <ClientChart type="pie" data={pieData} options={pieOptions} className="h-full w-full" />
         </CardContent>
       </Card>
 
@@ -152,7 +187,7 @@ export default function DashboardCharts() {
           <CardTitle>Total cost per month (last 6 months)</CardTitle>
         </CardHeader>
         <CardContent className="h-[300px]">
-          <ClientChart type="bar" data={barData as any} options={barOptions as any} className="h-full w-full" />
+          <ClientChart type="bar" data={barData} options={barOptions} className="h-full w-full" />
         </CardContent>
       </Card>
     </div>

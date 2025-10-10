@@ -1,4 +1,5 @@
 import { useLocation, useNavigate } from '@remix-run/react'
+import { motion } from 'framer-motion'
 import * as React from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -9,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { Textarea } from '~/components/ui/textarea'
 
 import { useToast } from '~/hooks/use-toast'
+import { useTypewriterMarkdown } from '~/hooks/useTypewriterMarkdown'
 import useSubscriptionStore from '~/store/subscriptionStore'
 import { usePreferencesStore } from '~/stores/preferences'
 
@@ -27,7 +29,7 @@ type SuggestionItem = {
   actions: Array<{
     label: string
     intent: 'open' | 'copy' | 'navigate' | 'toggle' | 'none'
-    payload?: Record<string, any>
+    payload?: Record<string, unknown>
   }>
 }
 
@@ -37,8 +39,20 @@ type SuggestionsResponse = {
   usage?: { inputTokens?: number; outputTokens?: number }
 }
 
+type MessageAnnotation = {
+  citationSources?: Array<{
+    startIndex?: number
+    endIndex?: number
+    uri?: string
+    license?: string
+  }>
+  category?: string
+  probability?: string
+  blocked?: boolean
+}
+
 type ChatResponse = {
-  message: { role: 'assistant'; content: string; annotations?: any[] }
+  message: { role: 'assistant'; content: string; annotations?: MessageAnnotation[] }
   usage?: { inputTokens?: number; outputTokens?: number }
 }
 
@@ -90,7 +104,8 @@ const BASE_SYSTEM_PROMPT = [
 
 function Spinner({ className = 'h-4 w-4 animate-spin text-muted-foreground' }: { className?: string }) {
   return (
-    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <title>Loading</title>
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
     </svg>
@@ -100,6 +115,7 @@ function Spinner({ className = 'h-4 w-4 animate-spin text-muted-foreground' }: {
 function SparkleIcon({ className = 'h-6 w-6' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <title>AI Assistant</title>
       <path d="M12 2l1.8 4.6L18 8.4l-4.2 1.8L12 15l-1.8-4.8L6 8.4l4.2-1.8L12 2zM4 14l1.2 3 3 1.2-3 1.2L4 22l-1.2-2.8L0 18.2l2.8-1.2L4 14zm16-2l.9 2.2 2.1.9-2.1.9L20 19l-.9-2.2-2.1-.9 2.1-.9L20 12z" />
     </svg>
   )
@@ -158,13 +174,13 @@ function synthesizeFallbackSuggestions(
   while (items.length < 3) {
     const g = generics[idx % generics.length]
     items.push({
-      type: g.type as any,
+      type: g.type as SuggestionItem['type'],
       title: g.title,
       description: g.description,
       targetIds: [],
       confidence: 0.6,
       actions: [],
-    } as SuggestionItem)
+    })
     idx++
   }
 
@@ -181,6 +197,33 @@ function buildPromptFromSuggestion(
     .map((s) => s.name)
   const meta = targetedNames.length ? ` Targeted: ${targetedNames.join(', ')}` : ''
   return `Analyze: ${sug.title}. ${sug.description}${meta}`
+}
+
+// Component for rendering assistant messages with typewriter animation
+function AssistantMessage({ content, isLatest }: { content: string; isLatest: boolean }) {
+  const { renderedMarkdown, isDone } = useTypewriterMarkdown({
+    fullText: content,
+    speedMs: 20,
+    disabled: !isLatest,
+  })
+
+  return (
+    <div className="text-output text-sm sm:text-base leading-7">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ node, ...props }) => <a target="_blank" rel="noopener noreferrer" {...props} />,
+        }}
+      >
+        {renderedMarkdown}
+      </ReactMarkdown>
+      {!isDone && isLatest && (
+        <span className="inline-block ml-1 w-2 h-4 bg-foreground animate-typing-caret" aria-hidden="true">
+          ▍
+        </span>
+      )}
+    </div>
+  )
 }
 
 export default function GeminiAssistant() {
@@ -201,7 +244,7 @@ export default function GeminiAssistant() {
   const [messages, setMessages] = React.useState<ChatMessage[]>([])
   const [inputText, setInputText] = React.useState('')
   const [isSending, setIsSending] = React.useState(false)
-  const [isThinking, setIsThinking] = React.useState(false)
+  const [sendPhase, setSendPhase] = React.useState<'idle' | 'ack' | 'thinking'>('idle')
 
   // Suggestions state
   const [suggestions, setSuggestions] = React.useState<SuggestionItem[]>([])
@@ -267,7 +310,7 @@ export default function GeminiAssistant() {
   }
 
   async function handleSend(promptOverride?: string) {
-    if (isSending) return
+    if (isSending || sendPhase !== 'idle') return
     const source = typeof promptOverride === 'string' ? promptOverride : inputText
     const trimmed = source.trim()
     if (!trimmed) return
@@ -281,7 +324,11 @@ export default function GeminiAssistant() {
       textareaRef.current.style.height = 'auto'
     }
     setIsSending(true)
-    setIsThinking(true)
+    setSendPhase('ack')
+
+    // Brief acknowledgement phase
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    setSendPhase('thinking')
 
     const context = {
       timezone,
@@ -290,9 +337,12 @@ export default function GeminiAssistant() {
     }
 
     // Compose a system instruction so the model behaves like a dashboard assistant and uses Markdown
+    interface StoreWithGetState {
+      getState?: () => { subscriptions: Array<{ id: string; name: string; price: number; currency: string }> }
+    }
     const subsStatic = (
-      typeof (useSubscriptionStore as any)?.getState === 'function'
-        ? (useSubscriptionStore as any).getState().subscriptions
+      typeof (useSubscriptionStore as StoreWithGetState)?.getState === 'function'
+        ? (useSubscriptionStore as StoreWithGetState).getState?.().subscriptions
         : subs
     ) as Array<{ id: string; name: string; price: number; currency: string }>
 
@@ -340,7 +390,11 @@ export default function GeminiAssistant() {
 
       if (!res.ok) {
         const err = await safeJson(res)
-        const msg = (err && (err.error?.message || err.message)) || `Request failed with ${res.status}`
+        const msg =
+          (err &&
+            ((err as { error?: { message?: string }; message?: string }).error?.message ||
+              (err as { message?: string }).message)) ||
+          `Request failed with ${res.status}`
         throw new Error(msg)
       }
 
@@ -353,10 +407,10 @@ export default function GeminiAssistant() {
           [...prev, { role: 'assistant', content: "I couldn't parse a response." } as ChatMessage].slice(-MAX_HISTORY),
         )
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: 'Chat error',
-        description: String(error?.message || 'Something went wrong'),
+        description: String((error as Error)?.message || 'Something went wrong'),
         variant: 'destructive',
       })
       // Optional assistant-like error message
@@ -368,7 +422,7 @@ export default function GeminiAssistant() {
       )
     } finally {
       setIsSending(false)
-      setIsThinking(false)
+      setSendPhase('idle')
     }
   }
 
@@ -443,7 +497,11 @@ export default function GeminiAssistant() {
 
       if (!res.ok) {
         const err = await safeJson(res)
-        const msg = (err && (err.error?.message || err.message)) || `Request failed with ${res.status}`
+        const msg =
+          (err &&
+            ((err as { error?: { message?: string }; message?: string }).error?.message ||
+              (err as { message?: string }).message)) ||
+          `Request failed with ${res.status}`
         throw new Error(msg)
       }
 
@@ -458,10 +516,10 @@ export default function GeminiAssistant() {
         // Keep the optimistic fallback; just ensure summary is cleared
         setSummary(undefined)
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: 'Suggestion error',
-        description: String(error?.message || 'Failed to generate suggestions'),
+        description: String((error as Error)?.message || 'Failed to generate suggestions'),
         variant: 'destructive',
       })
       // Keep the optimistic fallback already set
@@ -524,7 +582,12 @@ export default function GeminiAssistant() {
 
   // Helpers to render model outputs robustly (support both monthlyDelta and monthly; numeric or string confidence)
   function getImpactLabel(sug: SuggestionItem): string | null {
-    const ie: any = (sug as any)?.impactEstimate
+    interface ImpactEstimateExtended {
+      monthlyDelta?: number
+      monthly?: number
+      currency?: string
+    }
+    const ie = sug.impactEstimate as ImpactEstimateExtended | undefined
     if (!ie) return null
     const monthly =
       typeof ie?.monthlyDelta === 'number' ? ie.monthlyDelta : typeof ie?.monthly === 'number' ? ie.monthly : null
@@ -534,7 +597,7 @@ export default function GeminiAssistant() {
   }
 
   function getConfidenceLabel(sug: SuggestionItem): string | null {
-    const c: any = (sug as any)?.confidence
+    const c = sug.confidence as number | string
     if (typeof c === 'number') {
       const pct = Math.max(0, Math.min(1, c)) * 100
       return `${pct.toFixed(0)}%`
@@ -552,38 +615,68 @@ export default function GeminiAssistant() {
 
   return (
     <>
-      {/* Floating FAB Button */}
-      <Button
-        ref={fabRef}
-        aria-label="Open assistant"
-        className="fixed z-[80] rounded-full shadow-lg md:h-12 md:w-12 h-12 w-12 bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-2"
+      {/* Floating FAB Button with magical animation */}
+      <motion.div
+        className="fixed z-[80]"
         style={{
           bottom: 'calc(env(safe-area-inset-bottom, 0px) + 4.5rem)',
           right: 'calc(env(safe-area-inset-right, 0px) + 1rem)',
         }}
-        onClick={() => setOpen(true)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            setOpen(true)
-          }
-        }}
-        variant="default"
-        size="icon"
+        whileHover={{ scale: 1.1 }}
+        whileTap={{ scale: 0.95 }}
+        initial={{ scale: 1 }}
+        animate={{ scale: 1 }}
       >
-        <SparkleIcon className="h-6 w-6" />
-        <span className="sr-only">Open assistant</span>
-      </Button>
+        <Button
+          ref={fabRef}
+          aria-label="Open assistant"
+          className="relative rounded-full shadow-lg md:h-12 md:w-12 h-12 w-12 bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-2 overflow-hidden group"
+          onClick={() => setOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              setOpen(true)
+            }
+          }}
+          variant="default"
+          size="icon"
+        >
+          {/* Pulsating glow effect */}
+          <div className="absolute inset-0 rounded-full bg-primary/20 animate-pulse-glow" />
+
+          {/* Sparkle orbit effect */}
+          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
+              <div className="animate-sparkle-orbit">
+                <SparkleIcon className="h-3 w-3 text-primary-foreground" />
+              </div>
+            </div>
+          </div>
+
+          <SparkleIcon className="relative h-6 w-6 z-10" />
+          <span className="sr-only">Open assistant</span>
+        </Button>
+
+        {/* Reduced motion fallback */}
+        <style>{`
+          @media (prefers-reduced-motion: reduce) {
+            .animate-pulse-glow,
+            .animate-sparkle-orbit,
+            .animate-sparkle {
+              animation: none !important;
+            }
+          }
+        `}</style>
+      </motion.div>
 
       <Sheet open={open} onOpenChange={handleOpenChange}>
         <SheetContent
           side="right"
-          role="dialog"
           aria-label="Gemini assistant panel"
-          className="w-full sm:max-w-lg p-0 flex flex-col h-[100dvh]"
+          className="w-full sm:max-w-lg p-0 flex flex-col h-[100dvh] bg-gradient-to-b from-background via-background to-background/95"
         >
           <div className="flex h-full flex-col">
-            <div className="sticky top-0 z-10 border-b bg-background/95 px-4 pt-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+            <div className="sticky top-0 z-10 border-b bg-background/95 px-4 pt-4 backdrop-blur-md supports-[backdrop-filter]:bg-background/80 shadow-sm">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-base font-semibold">Gemini Assistant</h3>
                 <div className="flex items-center gap-2">
@@ -613,66 +706,121 @@ export default function GeminiAssistant() {
                 <TabsContent value="chat" className="mt-2 h-full min-h-0 flex flex-col">
                   <div
                     ref={listRef}
-                    className="flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-2 pr-2"
+                    className="flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-3 pr-2"
                     aria-live="polite"
                     aria-atomic="false"
                   >
                     {messages.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">Start a conversation with the assistant.</p>
+                      <div className="flex flex-col items-center justify-center h-full text-center px-4 space-y-2">
+                        <SparkleIcon className="h-12 w-12 text-muted-foreground/50" />
+                        <p className="text-sm text-muted-foreground">Start a conversation with the assistant.</p>
+                        <p className="text-xs text-muted-foreground/70">
+                          Ask about your subscriptions, get recommendations, or explore insights.
+                        </p>
+                      </div>
                     ) : null}
                     {messages.map((m, idx) => {
                       const isUser = m.role === 'user'
+                      const isLatest = idx === messages.length - 1
                       return (
                         <div
-                          key={idx}
-                          className={`max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${isUser ? `ml-auto bg-primary ${userBubbleTextClass}` : 'mr-auto bg-muted text-foreground'}`}
+                          key={`msg-${idx}-${m.content.slice(0, 20)}`}
+                          className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm shadow-sm ${
+                            isUser
+                              ? `ml-auto bg-primary ${userBubbleTextClass} rounded-br-md`
+                              : 'mr-auto bg-gradient-to-br from-muted to-muted/50 text-foreground backdrop-blur-sm rounded-bl-md border border-border/50'
+                          }`}
                         >
                           {isUser ? (
                             m.content
                           ) : (
-                            <div className="text-output text-sm sm:text-base leading-7">
-                              <ReactMarkdown
-                                remarkPlugins={[remarkGfm]}
-                                components={{
-                                  a: ({ node, ...props }) => <a target="_blank" rel="noopener noreferrer" {...props} />,
-                                }}
-                              >
-                                {m.content}
-                              </ReactMarkdown>
-                            </div>
+                            <AssistantMessage content={m.content} isLatest={isLatest && !isSending} />
                           )}
                         </div>
                       )
                     })}
+                    {sendPhase !== 'idle' && (
+                      <div className="max-w-[85%] mr-auto">
+                        <div className="rounded-2xl rounded-bl-md px-4 py-3 bg-gradient-to-br from-muted to-muted/50 backdrop-blur-sm border border-border/50 shadow-sm">
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Spinner className="h-3 w-3" />
+                            <span>{sendPhase === 'ack' ? 'Message sent...' : 'Thinking...'}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     <div className="h-px" />
                   </div>
 
-                  <div className="mt-2 border-t pt-2 sticky bottom-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+                  <div className="mt-2 border-t pt-3 sticky bottom-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+                    {sendPhase !== 'idle' && (
+                      <div className="mb-2 px-1">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          {sendPhase === 'ack' && (
+                            <>
+                              <svg
+                                className="h-3 w-3 text-green-500"
+                                fill="currentColor"
+                                viewBox="0 0 20 20"
+                                aria-hidden="true"
+                              >
+                                <title>Message sent</title>
+                                <path
+                                  fillRule="evenodd"
+                                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                                  clipRule="evenodd"
+                                />
+                              </svg>
+                              <span>Message sent • Waiting for Gemini</span>
+                            </>
+                          )}
+                          {sendPhase === 'thinking' && (
+                            <>
+                              <Spinner className="h-3 w-3" />
+                              <span>Gemini is thinking...</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     <div className="flex items-end gap-2">
-                      <Textarea
-                        ref={textareaRef}
-                        value={inputText}
-                        onChange={(e) => setInputText(e.target.value)}
-                        onKeyDown={handleKeyDownTextarea}
-                        onInput={(e) => {
-                          const t = e.currentTarget
-                          t.style.height = 'auto'
-                          t.style.height = Math.min(t.scrollHeight, 240) + 'px'
-                        }}
-                        rows={2}
-                        placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
-                        className="min-h-[44px] max-h-60"
-                        disabled={isSending}
-                      />
+                      <div className="flex-1 relative">
+                        <Textarea
+                          ref={textareaRef}
+                          value={inputText}
+                          onChange={(e) => setInputText(e.target.value)}
+                          onKeyDown={handleKeyDownTextarea}
+                          onInput={(e) => {
+                            const t = e.currentTarget
+                            t.style.height = 'auto'
+                            t.style.height = `${Math.min(t.scrollHeight, 240)}px`
+                          }}
+                          rows={2}
+                          placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
+                          className="min-h-[44px] max-h-60 rounded-xl bg-muted/50 border-border/50 shadow-sm resize-none"
+                          disabled={sendPhase === 'thinking'}
+                        />
+                      </div>
                       <Button
                         type="button"
                         onClick={() => void handleSend()}
-                        disabled={isSending || !inputText.trim()}
-                        className="h-[44px] px-4"
+                        disabled={sendPhase === 'thinking' || !inputText.trim()}
+                        className="h-[44px] px-4 rounded-xl shadow-sm"
                       >
-                        {isSending ? (
+                        {sendPhase === 'thinking' ? (
                           <span className="inline-flex items-center gap-2">
-                            <Spinner /> Sending
+                            <Spinner className="h-4 w-4" />
+                          </span>
+                        ) : sendPhase === 'ack' ? (
+                          <span className="inline-flex items-center gap-2">
+                            <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                              <title>Sent</title>
+                              <path
+                                fillRule="evenodd"
+                                d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
                           </span>
                         ) : (
                           'Send'

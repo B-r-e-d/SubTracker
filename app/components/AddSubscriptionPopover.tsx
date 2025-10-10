@@ -4,18 +4,17 @@ import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useLoaderData } from '@remix-run/react'
 import { PlusCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
 import { z } from 'zod'
-import type { loader } from '~/routes/_index'
 import type { Subscription } from '~/store/subscriptionStore'
 import { IconUrlInput } from './IconFinder'
 
 interface AddSubscriptionPopoverProps {
   addSubscription: (subscription: Omit<Subscription, 'id'>) => void
+  rates: Record<string, number> | null
 }
 
 const subscriptionSchema = z.object({
@@ -28,8 +27,7 @@ const subscriptionSchema = z.object({
 
 type SubscriptionFormValues = z.infer<typeof subscriptionSchema>
 
-export const AddSubscriptionPopover: React.FC<AddSubscriptionPopoverProps> = ({ addSubscription }) => {
-  const { rates } = useLoaderData<typeof loader>()
+export const AddSubscriptionPopover: React.FC<AddSubscriptionPopoverProps> = ({ addSubscription, rates }) => {
   const [open, setOpen] = useState(false)
   const [shouldFocus, setShouldFocus] = useState(false)
 
@@ -77,12 +75,13 @@ export const AddSubscriptionPopover: React.FC<AddSubscriptionPopoverProps> = ({ 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button>
-          <PlusCircle className="mr-2 h-4 w-4" />
-          Add Subscription
+        <Button className="group relative overflow-hidden bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 dark:from-emerald-500 dark:to-green-500 dark:hover:from-emerald-600 dark:hover:to-green-600 shadow-md hover:shadow-lg transition-all duration-300 hover:scale-105">
+          <span className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
+          <PlusCircle className="mr-2 h-4 w-4 relative transition-transform group-hover:rotate-90 duration-300" />
+          <span className="relative">Add Subscription</span>
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-80">
+      <PopoverContent className="w-80 bg-card/95 backdrop-blur-sm border-border/50 shadow-xl">
         <form onSubmit={handleSubmit(onSubmit)}>
           <h3 className="font-medium text-lg mb-4">Add Subscription</h3>
           <div className="space-y-4">

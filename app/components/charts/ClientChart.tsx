@@ -13,7 +13,7 @@ type ClientChartProps<T extends AnyChartType> = {
 export default function ClientChart<T extends AnyChartType>(props: ClientChartProps<T>) {
   const { type, data, options, className } = props
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const chartRef = useRef<ChartJS<any, any, any> | null>(null)
+  const chartRef = useRef<ChartJS<T> | null>(null)
 
   useEffect(() => {
     let isMounted = true
@@ -26,14 +26,15 @@ export default function ClientChart<T extends AnyChartType>(props: ClientChartPr
       const ctx = canvasRef.current?.getContext('2d')
       if (!ctx) return
 
-      // Merge maintainAspectRatio to false unless explicitly provided (use assign to satisfy deep generic)
-      const mergedOptions = Object.assign({ maintainAspectRatio: false } as any, options) as ChartOptions<T>
+      // Merge maintainAspectRatio to false unless explicitly provided
+      const baseOptions = { maintainAspectRatio: false }
+      const mergedOptions = options ? { ...baseOptions, ...options } : baseOptions
 
       chartRef.current = new ChartAuto(ctx, {
         type,
         data,
         options: mergedOptions,
-      })
+      }) as ChartJS<T>
     }
 
     loadAndRender()

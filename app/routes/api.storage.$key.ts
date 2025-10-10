@@ -6,7 +6,7 @@ import { defaultSubscriptions } from '~/store/subscriptionStore'
 
 const CONFIG_FILE = path.join(process.cwd(), '/data/config.json')
 
-async function readConfig(): Promise<Record<string, any>> {
+async function readConfig(): Promise<Record<string, unknown>> {
   try {
     const data = await fs.readFile(CONFIG_FILE, 'utf-8')
     return JSON.parse(data)
@@ -19,7 +19,7 @@ async function readConfig(): Promise<Record<string, any>> {
   }
 }
 
-async function writeConfig(config: Record<string, any>): Promise<void> {
+async function writeConfig(config: Record<string, unknown>): Promise<void> {
   try {
     await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8')
   } catch (error) {

@@ -1,4 +1,4 @@
-import { type GenerationConfig, GoogleGenerativeAI } from '@google/generative-ai'
+import { type GenerationConfig, GoogleGenerativeAI, SchemaType } from '@google/generative-ai'
 
 /**
  * Environment
@@ -37,8 +37,25 @@ export type UsageMeta = {
   outputTokens?: number
 }
 
+export type CitationMetadata = {
+  citationSources?: Array<{
+    startIndex?: number
+    endIndex?: number
+    uri?: string
+    license?: string
+  }>
+}
+
+export type SafetyRating = {
+  category: string
+  probability: string
+  blocked?: boolean
+}
+
+export type MessageAnnotation = CitationMetadata | SafetyRating
+
 export type ChatResult = {
-  message: { role: 'assistant'; content: string; annotations?: any[] }
+  message: { role: 'assistant'; content: string; annotations?: MessageAnnotation[] }
   usage?: UsageMeta
 }
 
@@ -109,13 +126,17 @@ function mapRoleToGemini(role: ChatRole): 'user' | 'model' {
   return 'user'
 }
 
+interface TimeoutError extends Error {
+  code: string
+}
+
 function withTimeout<T>(promise: Promise<T>, ms = DEFAULT_TIMEOUT_MS): Promise<T> {
-  return Promise.race<[Promise<T>, Promise<never>]>([
+  return Promise.race([
     promise,
-    new Promise((_, reject) => {
+    new Promise<never>((_, reject) => {
       const id = setTimeout(() => {
         clearTimeout(id)
-        const err: any = new Error(`Gemini operation timed out after ${ms}ms`)
+        const err = new Error(`Gemini operation timed out after ${ms}ms`) as TimeoutError
         err.code = 'TIMEOUT'
         reject(err)
       }, ms)
@@ -123,10 +144,25 @@ function withTimeout<T>(promise: Promise<T>, ms = DEFAULT_TIMEOUT_MS): Promise<T
   ])
 }
 
-function extractUsage(result: any): UsageMeta | undefined {
+interface UsageMetadata {
+  inputTokenCount?: number
+  promptTokenCount?: number
+  totalPromptTokens?: number
+  outputTokenCount?: number
+  candidatesTokenCount?: number
+  totalTokens?: number
+}
+
+interface GenerateContentResult {
+  response?: {
+    usageMetadata?: UsageMetadata
+  }
+}
+
+function extractUsage(result: unknown): UsageMeta | undefined {
   try {
-    // Most recent SDKs expose usageMetadata on result.response
-    const usage = result?.response?.usageMetadata
+    const typed = result as GenerateContentResult
+    const usage = typed?.response?.usageMetadata
     if (!usage) return undefined
     const inputTokens = usage.inputTokenCount ?? usage.promptTokenCount ?? usage.totalPromptTokens ?? undefined
     const outputTokens = usage.outputTokenCount ?? usage.candidatesTokenCount ?? usage.totalTokens ?? undefined
@@ -192,7 +228,7 @@ export async function geminiChat(messages: ChatMessage[], context?: ChatContext)
 
   const nonEmpty = trimmed.filter((m) => m.content && m.content.trim().length > 0)
   if (nonEmpty.length === 0) {
-    const err: any = new Error('No valid messages provided')
+    const err = new Error('No valid messages provided') as TimeoutError
     err.code = 'BAD_REQUEST'
     throw err
   }
@@ -232,22 +268,23 @@ export async function geminiChat(messages: ChatMessage[], context?: ChatContext)
 
     const text = result?.response?.text?.() ?? ''
     const cand0 = result?.response?.candidates?.[0]
-    let annotations: any[] | undefined
+    let annotations: MessageAnnotation[] | undefined
     if (cand0?.citationMetadata) {
-      annotations = [cand0.citationMetadata]
+      annotations = [cand0.citationMetadata as CitationMetadata]
     } else if (cand0?.safetyRatings) {
-      annotations = cand0.safetyRatings as any[]
+      annotations = cand0.safetyRatings as SafetyRating[]
     }
 
     return {
       message: { role: 'assistant', content: text ?? '', annotations },
       usage: extractUsage(result),
     }
-  } catch (error: any) {
-    if (error?.code === 'TIMEOUT') throw error
-    const err: any = new Error(error?.message || 'Gemini chat model error')
-    err.code = 'MODEL_ERROR'
-    throw err
+  } catch (error: unknown) {
+    const err = error as TimeoutError
+    if (err?.code === 'TIMEOUT') throw err
+    const modelErr = new Error((error as Error)?.message || 'Gemini chat model error') as TimeoutError
+    modelErr.code = 'MODEL_ERROR'
+    throw modelErr
   }
 }
 
@@ -264,7 +301,7 @@ export async function geminiSuggestions(
 ): Promise<SuggestionsResult> {
   const sanitized = sanitizeSubscriptions(subscriptions)
   if (sanitized.length === 0) {
-    const err: any = new Error('No valid subscriptions provided')
+    const err = new Error('No valid subscriptions provided') as TimeoutError
     err.code = 'BAD_REQUEST'
     throw err
   }
@@ -274,45 +311,42 @@ export async function geminiSuggestions(
     topK: 20,
     topP: 0.9,
     maxOutputTokens: 1024,
-    // These fields are supported on Gemini 1.5+; harmless if ignored on older SDKs.
-    // @ts-ignore
     responseMimeType: 'application/json',
-    // @ts-ignore
     responseSchema: {
-      type: 'object',
+      type: SchemaType.OBJECT,
       properties: {
         suggestions: {
-          type: 'array',
+          type: SchemaType.ARRAY,
           items: {
-            type: 'object',
+            type: SchemaType.OBJECT,
             properties: {
-              type: { type: 'string' },
-              title: { type: 'string' },
-              description: { type: 'string' },
+              type: { type: SchemaType.STRING },
+              title: { type: SchemaType.STRING },
+              description: { type: SchemaType.STRING },
               targetIds: {
-                type: 'array',
-                items: { type: 'string' },
+                type: SchemaType.ARRAY,
+                items: { type: SchemaType.STRING },
               },
               impactEstimate: {
-                type: 'object',
+                type: SchemaType.OBJECT,
                 properties: {
-                  currency: { type: 'string' },
-                  monthly: { type: 'number' },
-                  yearly: { type: 'number' },
+                  currency: { type: SchemaType.STRING },
+                  monthly: { type: SchemaType.NUMBER },
+                  yearly: { type: SchemaType.NUMBER },
                 },
               },
               confidence: {
-                type: 'string',
+                type: SchemaType.STRING,
                 enum: ['low', 'medium', 'high'],
               },
               actions: {
-                type: 'array',
+                type: SchemaType.ARRAY,
                 items: {
-                  type: 'object',
+                  type: SchemaType.OBJECT,
                   properties: {
-                    type: { type: 'string' },
-                    label: { type: 'string' },
-                    targetId: { type: 'string' },
+                    type: { type: SchemaType.STRING },
+                    label: { type: SchemaType.STRING },
+                    targetId: { type: SchemaType.STRING },
                   },
                   required: ['type', 'label'],
                 },
@@ -321,11 +355,11 @@ export async function geminiSuggestions(
             required: ['type', 'title', 'description', 'targetIds'],
           },
         },
-        summary: { type: 'string' },
+        summary: { type: SchemaType.STRING },
       },
       required: ['suggestions'],
     },
-  } as any
+  }
 
   const model = genAI.getGenerativeModel({
     model: GEMINI_SUGGEST_MODEL,
@@ -369,26 +403,52 @@ export async function geminiSuggestions(
       }),
     )
 
+    interface ParsedResponse {
+      suggestions?: unknown[]
+      summary?: string
+    }
+
     const text = result?.response?.text?.() ?? ''
-    let parsed: any = null
+    let parsed: ParsedResponse = { suggestions: [] }
     try {
       parsed = text ? JSON.parse(text) : { suggestions: [] }
     } catch {
       // Fallback: attempt rudimentary extraction if the model returned text with code fences
-      const match = text.match(/```json\s*([\s\S]+?)\s*```/i) || text.match(/```[\s\S]*?```/i)
-      if (match && match[1]) {
+      const match = text.match(/```json\s*([\s\S]+?)\s*```/i)
+      if (match?.[1]) {
         parsed = JSON.parse(match[1])
       } else {
         throw new Error('Model did not return valid JSON')
       }
     }
 
+    interface RawSuggestion {
+      type?: unknown
+      title?: unknown
+      description?: unknown
+      targetIds?: unknown
+      impactEstimate?: {
+        currency?: unknown
+        monthly?: unknown
+        yearly?: unknown
+      }
+      confidence?: unknown
+      actions?: unknown[]
+    }
+
+    interface RawAction {
+      type?: unknown
+      label?: unknown
+      targetId?: unknown
+    }
+
     // Normalize suggestions
-    const suggestionsArr: Suggestion[] = Array.isArray(parsed?.suggestions) ? parsed.suggestions : []
+    const suggestionsArr = (Array.isArray(parsed?.suggestions) ? parsed.suggestions : []) as RawSuggestion[]
     const normalized: Suggestion[] = suggestionsArr
       .filter(
-        (s) =>
-          s &&
+        (s): s is RawSuggestion & { type: string; title: string; description: string; targetIds: unknown[] } =>
+          s !== null &&
+          s !== undefined &&
           typeof s.type === 'string' &&
           typeof s.title === 'string' &&
           typeof s.description === 'string' &&
@@ -398,7 +458,7 @@ export async function geminiSuggestions(
         type: String(s.type),
         title: trimText(String(s.title), 200),
         description: trimText(String(s.description), 1000),
-        targetIds: (s.targetIds as any[]).map(String).filter(Boolean),
+        targetIds: s.targetIds.map((id) => String(id)).filter(Boolean),
         impactEstimate:
           s.impactEstimate && typeof s.impactEstimate === 'object'
             ? {
@@ -411,8 +471,14 @@ export async function geminiSuggestions(
           s.confidence === 'low' || s.confidence === 'medium' || s.confidence === 'high' ? s.confidence : undefined,
         actions: Array.isArray(s.actions)
           ? s.actions
-              .filter((a: any) => a && typeof a.type === 'string' && typeof a.label === 'string')
-              .map((a: any) => ({
+              .filter(
+                (a): a is RawAction & { type: string; label: string } =>
+                  a !== null &&
+                  a !== undefined &&
+                  typeof (a as RawAction).type === 'string' &&
+                  typeof (a as RawAction).label === 'string',
+              )
+              .map((a) => ({
                 type: String(a.type),
                 label: String(a.label),
                 ...(a.targetId ? { targetId: String(a.targetId) } : {}),
@@ -425,10 +491,11 @@ export async function geminiSuggestions(
       summary: typeof parsed?.summary === 'string' ? trimText(parsed.summary, 1000) : undefined,
       usage: extractUsage(result),
     }
-  } catch (error: any) {
-    if (error?.code === 'TIMEOUT') throw error
-    const err: any = new Error(error?.message || 'Gemini suggestions model error')
-    err.code = 'MODEL_ERROR'
-    throw err
+  } catch (error: unknown) {
+    const err = error as TimeoutError
+    if (err?.code === 'TIMEOUT') throw err
+    const modelErr = new Error((error as Error)?.message || 'Gemini suggestions model error') as TimeoutError
+    modelErr.code = 'MODEL_ERROR'
+    throw modelErr
   }
 }

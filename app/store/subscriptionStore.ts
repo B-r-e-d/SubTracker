@@ -95,15 +95,18 @@ const useSubscriptionStore = create<SubscriptionStore>()(
 )
 
 // Type guard for subscription validation
-function isValidSubscription(sub: any): sub is Subscription {
+function isValidSubscription(sub: unknown): sub is Subscription {
+  if (typeof sub !== 'object' || sub === null) {
+    return false
+  }
+  const obj = sub as Record<string, unknown>
   return (
-    typeof sub === 'object' &&
-    typeof sub.id === 'string' &&
-    typeof sub.name === 'string' &&
-    typeof sub.price === 'number' &&
-    typeof sub.currency === 'string' &&
-    typeof sub.domain === 'string' &&
-    (sub.icon === undefined || typeof sub.icon === 'string')
+    typeof obj.id === 'string' &&
+    typeof obj.name === 'string' &&
+    typeof obj.price === 'number' &&
+    typeof obj.currency === 'string' &&
+    typeof obj.domain === 'string' &&
+    (obj.icon === undefined || typeof obj.icon === 'string')
   )
 }
 

@@ -95,8 +95,8 @@ function sanitizeMessages(input: unknown): ChatMessage[] | null {
   const out: ChatMessage[] = []
   for (const m of capped) {
     if (!m || typeof m !== 'object') continue
-    const role = (m as any).role
-    const content = (m as any).content
+    const role = (m as Record<string, unknown>).role
+    const content = (m as Record<string, unknown>).content
     if (!isValidRole(role)) continue
     if (typeof content !== 'string') continue
     const trimmed = content.trim()
@@ -185,7 +185,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return badRequest('Unknown action')
   }
 
-  let body: any
+  let body: unknown
   try {
     body = await request.json()
   } catch {
@@ -196,17 +196,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
   let gemini: typeof import('~/services/gemini.server')
   try {
     gemini = await import('~/services/gemini.server')
-  } catch (e: any) {
+  } catch (e: unknown) {
     // Service module throws if the key is missing on import
-    if (String(e?.message || '').includes('GEMINI_API_KEY is not set')) {
+    const message = e instanceof Error ? e.message : String(e)
+    if (message.includes('GEMINI_API_KEY is not set')) {
       return unauthorized('Server configuration missing: GEMINI_API_KEY')
     }
-    return modelError(e?.message || 'Failed to initialize Gemini service')
+    return modelError(e instanceof Error ? e.message : 'Failed to initialize Gemini service')
   }
 
   if (action === 'chat') {
-    const messages = sanitizeMessages(body?.messages)
-    const context = sanitizeContext(body?.context)
+    const bodyObj = body as Record<string, unknown>
+    const messages = sanitizeMessages(bodyObj?.messages)
+    const context = sanitizeContext(bodyObj?.context)
     if (!messages) return badRequest('messages must be a non-empty array of valid items (max 50)')
     try {
       const result = await gemini.geminiChat(messages, context)
@@ -221,16 +223,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
         },
         { headers: JSON_HEADERS },
       )
-    } catch (e: any) {
-      if (e?.code === 'BAD_REQUEST') return badRequest(e.message || 'Invalid chat request')
-      if (e?.code === 'TIMEOUT') return timeoutError('The chat operation timed out')
-      return modelError(e?.message || 'Chat model error')
+    } catch (e: unknown) {
+      const error = e as { code?: string; message?: string }
+      if (error?.code === 'BAD_REQUEST') return badRequest(error.message || 'Invalid chat request')
+      if (error?.code === 'TIMEOUT') return timeoutError('The chat operation timed out')
+      return modelError(error?.message || 'Chat model error')
     }
   }
 
   // suggestions
-  const subs = sanitizeSubscriptions(body?.subscriptions)
-  const prefs = sanitizePreferences(body?.preferences)
+  const bodyObj = body as Record<string, unknown>
+  const subs = sanitizeSubscriptions(bodyObj?.subscriptions)
+  const prefs = sanitizePreferences(bodyObj?.preferences)
   if (!subs) return badRequest('subscriptions must be a non-empty array of valid items (max 200)')
 
   const sampledAt = new Date().toISOString()
@@ -244,9 +248,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
       },
       { headers: JSON_HEADERS },
     )
-  } catch (e: any) {
-    if (e?.code === 'BAD_REQUEST') return badRequest(e.message || 'Invalid suggestions request')
-    if (e?.code === 'TIMEOUT') return timeoutError('The suggestions operation timed out')
-    return modelError(e?.message || 'Suggestions model error')
+  } catch (e: unknown) {
+    const error = e as { code?: string; message?: string }
+    if (error?.code === 'BAD_REQUEST') return badRequest(error.message || 'Invalid suggestions request')
+    if (error?.code === 'TIMEOUT') return timeoutError('The suggestions operation timed out')
+    return modelError(error?.message || 'Suggestions model error')
   }
 }

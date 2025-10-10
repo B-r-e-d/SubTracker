@@ -86,13 +86,53 @@ export default {
   				'100%': {
   					'background-position': '200%'
   				}
+  			},
+  			'pulse-glow': {
+  				'0%, 100%': {
+  					opacity: '1',
+  					transform: 'scale(1)'
+  				},
+  				'50%': {
+  					opacity: '0.8',
+  					transform: 'scale(1.05)'
+  				}
+  			},
+  			sparkle: {
+  				'0%, 100%': {
+  					opacity: '0',
+  					transform: 'rotate(0deg) translateY(0)'
+  				},
+  				'50%': {
+  					opacity: '1',
+  					transform: 'rotate(180deg) translateY(-4px)'
+  				}
+  			},
+  			'sparkle-orbit': {
+  				'0%': {
+  					transform: 'rotate(0deg) translateX(20px) rotate(0deg)'
+  				},
+  				'100%': {
+  					transform: 'rotate(360deg) translateX(20px) rotate(-360deg)'
+  				}
+  			},
+  			'typing-caret': {
+  				'0%, 100%': {
+  					opacity: '1'
+  				},
+  				'50%': {
+  					opacity: '0'
+  				}
   			}
   		},
   		animation: {
   			'accordion-down': 'accordion-down 0.2s ease-out',
   			'accordion-up': 'accordion-up 0.2s ease-out',
   			'border-beam': 'border-beam calc(var(--duration)*1s) infinite linear',
-  			rainbow: 'rainbow var(--speed, 2s) infinite linear'
+  			rainbow: 'rainbow var(--speed, 2s) infinite linear',
+  			'pulse-glow': 'pulse-glow 2s ease-in-out infinite',
+  			sparkle: 'sparkle 1.5s ease-in-out infinite',
+  			'sparkle-orbit': 'sparkle-orbit 3s linear infinite',
+  			'typing-caret': 'typing-caret 1s ease-in-out infinite'
   		}
   	}
   },
