@@ -1,4 +1,4 @@
-import { Home, LayoutDashboard } from 'lucide-react'
+import { CreditCard, Home, LayoutDashboard } from 'lucide-react'
 import type * as React from 'react'
 import useSubscriptionStore from '~/store/subscriptionStore'
 import AddSubscriptionPopover from './AddSubscriptionPopover'
@@ -20,14 +20,14 @@ const Header = ({ view, setView, rates }: HeaderProps): JSX.Element => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className="relative w-12 h-12 rounded-full bg-gradient-to-br from-emerald-400 via-green-500 to-teal-600 dark:from-emerald-500 dark:via-green-600 dark:to-teal-700 flex items-center justify-center shadow-lg ring-2 ring-emerald-400/20 dark:ring-emerald-500/20 transition-transform hover:scale-110 duration-300">
-              <span className="text-xl filter drop-shadow-sm">🍃</span>
-              <div className="absolute inset-0 rounded-full bg-gradient-to-br from-emerald-400/20 to-transparent animate-pulse" />
+            <div className="relative w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 via-indigo-500 to-purple-600 dark:from-blue-500 dark:via-indigo-600 dark:to-purple-700 flex items-center justify-center shadow-lg ring-2 ring-blue-400/20 dark:ring-blue-500/20 transition-transform hover:scale-110 duration-300">
+              <CreditCard className="h-6 w-6 text-white filter drop-shadow-sm" />
+              <div className="absolute inset-0 rounded-full bg-gradient-to-br from-blue-400/20 to-transparent animate-pulse" />
             </div>
 
             <div>
-              <h1 className="text-2xl sm:text-3xl font-extrabold bg-gradient-to-r from-emerald-600 via-green-600 to-teal-600 dark:from-emerald-400 dark:via-green-400 dark:to-teal-400 bg-clip-text text-transparent">
-                LedgerLeaf
+              <h1 className="text-2xl sm:text-3xl font-extrabold bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 dark:from-blue-400 dark:via-indigo-400 dark:to-purple-400 bg-clip-text text-transparent">
+                SubTracker
               </h1>
               <p className="mt-0.5 text-xs sm:text-sm text-muted-foreground">
                 Track and manage recurring subscriptions.
@@ -45,7 +45,7 @@ const Header = ({ view, setView, rates }: HeaderProps): JSX.Element => {
               size="default"
               className="group relative overflow-hidden transition-all hover:shadow-md hover:scale-105"
             >
-              <span className="absolute inset-0 bg-gradient-to-r from-emerald-400/10 via-green-400/10 to-teal-400/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+              <span className="absolute inset-0 bg-gradient-to-r from-blue-400/10 via-indigo-400/10 to-purple-400/10 opacity-0 group-hover:opacity-100 transition-opacity" />
               {view === 'home' ? (
                 <>
                   <LayoutDashboard className="mr-2 h-4 w-4 transition-transform group-hover:rotate-12" />

@@ -1,6 +1,6 @@
-# LedgerLeaf - Subscription Tracker
+# SubTracker - Subscription Tracker
 
-LedgerLeaf helps you track and manage recurring subscriptions. Keep an overview of costs, currencies, and billing cycles in a simple interface.
+SubTracker helps you track and manage recurring subscriptions. Keep an overview of costs, currencies, and billing cycles in a simple interface.
 
 ## Getting Started
 
@@ -41,8 +41,8 @@ Notes:
 
 Build and run:
 ```bash
-docker build -t ledgerleaf .
-docker run -p 7574:7574 --rm --name ledgerleaf ledgerleaf
+docker build -t subtracker .
+docker run -p 7574:7574 --rm --name subtracker subtracker
 ```
 
 Then visit http://localhost:7574.

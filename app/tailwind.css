@@ -13,7 +13,7 @@ body {
 
 @layer base {
   :root {
-    /* LedgerLeaf palette (dark-friendly) */
+    /* SubTracker palette (dark-friendly) */
     --background: 221 39% 11%;
     --foreground: 220 14% 96%;
 

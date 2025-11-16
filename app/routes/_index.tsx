@@ -16,7 +16,7 @@ import { usePreferencesStore } from '~/stores/preferences'
 
 export const meta: MetaFunction = () => {
   return [
-    { title: 'LedgerLeaf - Subscription Tracker' },
+    { title: 'SubTracker - Subscription Tracker' },
     { name: 'description', content: 'Track and manage recurring subscriptions.' },
   ]
 }

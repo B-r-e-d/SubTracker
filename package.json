@@ -1,9 +1,9 @@
 {
-  "name": "ledgerleaf",
-  "description": "LedgerLeaf helps you track and manage recurring subscriptions.",
+  "name": "subtracker",
+  "description": "SubTracker helps you track and manage recurring subscriptions.",
   "version": "2.0.1",
   "license": "UNLICENSED",
-  "author": { "name": "LedgerLeaf Team" },
+  "author": { "name": "SubTracker Team" },
   "private": true,
   "sideEffects": false,
   "type": "module",
@@ -16,8 +16,8 @@
     "format": "biome format",
     "check": "biome check",
     "ci": "biome ci",
-    "docker:build": "docker build . -t ledgerleaf",
-    "docker:test": "docker run -p 3000:3000 --rm --name ledgerleaf ledgerleaf"
+    "docker:build": "docker build . -t subtracker",
+    "docker:test": "docker run -p 3000:3000 --rm --name subtracker subtracker"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
