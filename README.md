@@ -1,6 +1,6 @@
-# LedgerLeaf - Subscription Tracker
+# SubTracker - Subscription Tracker
 
-[LedgerLeaf](https://ledger-leaf-beige.vercel.app/) helps you track and manage recurring subscriptions. Keep an overview of costs, currencies, and billing cycles in a simple interface.
+[SubTracker](https://github.com/B-r-e-d/SubTracker) helps you track and manage recurring subscriptions. Keep an overview of costs, currencies, and billing cycles in a simple interface.
 
 ## Getting Started
 
