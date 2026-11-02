@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
 import { z } from 'zod'
+import { BILLING_CYCLES, type BillingCycle, CYCLE_LABEL, DEFAULT_CYCLE, toISODate } from '~/lib/billing'
 import type { Subscription } from '~/store/subscriptionStore'
 import { IconUrlInput } from './IconFinder'
 
@@ -23,6 +24,8 @@ const subscriptionSchema = z.object({
   currency: z.string().min(1, 'Currency is required'),
   icon: z.string().optional(),
   domain: z.string().url('Invalid URL'),
+  billingCycle: z.enum(['weekly', 'monthly', 'quarterly', 'yearly']),
+  nextRenewal: z.string().optional(),
 })
 
 type SubscriptionFormValues = z.infer<typeof subscriptionSchema>
@@ -47,6 +50,8 @@ export const AddSubscriptionPopover: React.FC<AddSubscriptionPopoverProps> = ({ 
       price: 0,
       currency: 'USD',
       domain: '',
+      billingCycle: DEFAULT_CYCLE,
+      nextRenewal: toISODate(new Date()),
     },
   })
 
@@ -126,6 +131,30 @@ export const AddSubscriptionPopover: React.FC<AddSubscriptionPopoverProps> = ({ 
                   </SelectContent>
                 </Select>
                 <p className="text-red-500 text-xs h-4">{errors.currency?.message}</p>
+              </div>
+            </div>
+            <div className="flex items-start space-x-2">
+              <div className="flex-1">
+                <Label htmlFor="billingCycle">Billing cycle</Label>
+                <Select
+                  onValueChange={(value) => setValue('billingCycle', value as BillingCycle)}
+                  defaultValue={DEFAULT_CYCLE}
+                >
+                  <SelectTrigger id="billingCycle">
+                    <SelectValue placeholder="Cycle" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {BILLING_CYCLES.map((cycle) => (
+                      <SelectItem key={cycle} value={cycle}>
+                        {CYCLE_LABEL[cycle]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex-1">
+                <Label htmlFor="nextRenewal">Next renewal</Label>
+                <Input id="nextRenewal" type="date" {...register('nextRenewal')} />
               </div>
             </div>
             <div>

@@ -30,12 +30,15 @@ const Summary: React.FC<SummaryProps> = ({ totals }) => {
   return (
     <Card className="mb-6 bg-card shadow-lg">
       <CardContent className="p-4 sm:p-6">
-        <h2 className="text-xl sm:text-2xl font-bold mb-4 text-foreground">Summary</h2>
+        <div className="flex items-baseline gap-2 mb-4">
+          <h2 className="text-xl sm:text-2xl font-bold text-foreground">Summary</h2>
+          <span className="text-xs text-muted-foreground">monthly equivalent</span>
+        </div>
         <div className="flex flex-wrap gap-3 sm:gap-4">
           {Object.entries(totals).map(([currency, total]) => (
             <div key={currency} className="flex items-center bg-muted rounded-lg p-2 sm:p-3 shadow-sm">
               <span className="font-semibold mr-1 text-muted-foreground text-sm">{currency}:</span>
-              <p className="text-base sm:text-lg font-bold text-foreground">{total.toFixed(0)}</p>
+              <p className="text-base sm:text-lg font-bold text-foreground">{total.toFixed(2)}</p>
             </div>
           ))}
         </div>
@@ -47,24 +50,30 @@ const Summary: React.FC<SummaryProps> = ({ totals }) => {
                 Rates for: {new Date(lastUpdated).toLocaleDateString()}
               </span>
             </div>
-            <div className="flex items-center">
-              <NumberTicker
-                decimalPlaces={2}
-                value={convertedTotal}
-                className="text-xl sm:text-2xl font-bold text-foreground mr-2"
-              />
-              <Select value={selectedCurrency} onValueChange={setSelectedCurrency}>
-                <SelectTrigger className="w-[80px]">
-                  <SelectValue placeholder="Currency" />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.keys(rates).map((currency) => (
-                    <SelectItem key={currency} value={currency}>
-                      {currency}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="flex flex-col items-end">
+              <div className="flex items-center">
+                <NumberTicker
+                  decimalPlaces={2}
+                  value={convertedTotal}
+                  className="text-xl sm:text-2xl font-bold text-foreground mr-1"
+                />
+                <span className="text-sm text-muted-foreground mr-2">/mo</span>
+                <Select value={selectedCurrency} onValueChange={setSelectedCurrency}>
+                  <SelectTrigger className="w-[80px]">
+                    <SelectValue placeholder="Currency" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.keys(rates).map((currency) => (
+                      <SelectItem key={currency} value={currency}>
+                        {currency}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <span className="text-xs text-muted-foreground mt-1">
+                {selectedCurrency} {(convertedTotal * 12).toFixed(2)} per year
+              </span>
             </div>
           </div>
         </div>

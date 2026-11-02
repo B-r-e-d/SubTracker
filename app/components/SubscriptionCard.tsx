@@ -4,6 +4,7 @@ import type React from 'react'
 import { Button } from '~/components/ui/button'
 import { Card, CardContent } from '~/components/ui/card'
 import { LinkPreview } from '~/components/ui/link-preview'
+import { CYCLE_LABEL, DEFAULT_CYCLE, daysUntil, describeRenewal, monthlyEquivalent } from '~/lib/billing'
 import type { Subscription } from '~/store/subscriptionStore'
 
 interface SubscriptionCardProps {
@@ -14,7 +15,18 @@ interface SubscriptionCardProps {
 }
 
 const SubscriptionCard: React.FC<SubscriptionCardProps> = ({ subscription, onEdit, onDelete, className }) => {
-  const { id, name, price, currency, domain, icon } = subscription
+  const { id, name, price, currency, domain, icon, billingCycle, nextRenewal } = subscription
+  const cycle = billingCycle ?? DEFAULT_CYCLE
+  const renewalDays = daysUntil(nextRenewal)
+
+  const renewalClass =
+    renewalDays === null
+      ? 'text-muted-foreground'
+      : renewalDays < 0
+        ? 'text-destructive'
+        : renewalDays <= 7
+          ? 'text-amber-600 dark:text-amber-400'
+          : 'text-muted-foreground'
 
   // Sanitize the domain URL
   const sanitizeDomain = (domain: string) => {
@@ -61,6 +73,11 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({ subscription, onEdi
               {name}
             </h3>
             <p className="text-md sm:text-sm font-semibold text-card-foreground text-center">{`${currency} ${price}`}</p>
+            <p className="text-xs text-muted-foreground text-center mt-0.5">
+              {CYCLE_LABEL[cycle]}
+              {cycle === 'monthly' ? '' : ` · ${currency} ${monthlyEquivalent(price, cycle).toFixed(2)}/mo`}
+            </p>
+            <p className={`text-xs text-center mt-1 ${renewalClass}`}>{describeRenewal(nextRenewal)}</p>
           </CardContent>
         </LinkPreview>
       </Card>

@@ -10,7 +10,7 @@
   "scripts": {
     "build": "remix vite:build",
     "dev": "remix vite:dev",
-    "start": "NODE_OPTIONS='-r dotenv/config' remix-serve ./build/server/index.js",
+    "start": "node -r dotenv/config ./node_modules/@remix-run/serve/dist/cli.js ./build/server/index.js",
     "typecheck": "tsc",
     "lint": "biome lint",
     "format": "biome format",

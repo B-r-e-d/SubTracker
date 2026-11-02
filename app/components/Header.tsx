@@ -1,5 +1,6 @@
-import { CreditCard, Home, LayoutDashboard } from 'lucide-react'
+import { CreditCard, Home, LayoutDashboard, LogOut } from 'lucide-react'
 import type * as React from 'react'
+import useAuthStore from '~/store/authStore'
 import useSubscriptionStore from '~/store/subscriptionStore'
 import AddSubscriptionPopover from './AddSubscriptionPopover'
 import { Button } from './ui/button'
@@ -14,6 +15,7 @@ interface HeaderProps {
 
 const Header = ({ view, setView, rates }: HeaderProps): JSX.Element => {
   const { addSubscription } = useSubscriptionStore()
+  const { user, logout } = useAuthStore()
 
   return (
     <header className="border-b border-border/40 bg-gradient-to-r from-background via-background to-muted/20 backdrop-blur-sm sticky top-0 z-50">
@@ -61,6 +63,25 @@ const Header = ({ view, setView, rates }: HeaderProps): JSX.Element => {
 
             <div className="min-w-[140px]">
               <AddSubscriptionPopover addSubscription={addSubscription} rates={rates} />
+            </div>
+
+            <div className="flex items-center gap-2 pl-2 border-l border-border/50">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-xs font-medium">
+                  {user?.slice(0, 1).toUpperCase() ?? '?'}
+                </div>
+                <span className="hidden sm:block text-sm text-muted-foreground max-w-[100px] truncate">{user}</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={logout}
+                title="Sign out"
+                className="text-muted-foreground hover:text-destructive"
+              >
+                <LogOut className="h-4 w-4" />
+                <span className="sr-only">Sign out</span>
+              </Button>
             </div>
           </div>
         </div>

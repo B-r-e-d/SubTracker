@@ -1,10 +1,11 @@
 import { Links, Meta, Outlet, Scripts, ScrollRestoration, json, useLoaderData } from '@remix-run/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Toaster } from '~/components/ui/sonner'
 import './tailwind.css'
 import GeminiAssistant from '~/components/GeminiAssistant'
 import { Toaster as ShadToaster } from '~/components/ui/toaster'
+import useAuthStore from '~/store/authStore'
 
 declare global {
   interface Window {
@@ -24,6 +25,10 @@ export async function loader() {
 
 export default function App() {
   const data = useLoaderData<typeof loader>()
+  const user = useAuthStore((s) => s.user)
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -59,7 +64,7 @@ export default function App() {
           <Scripts />
           <Toaster duration={1000} />
           <ShadToaster />
-          <GeminiAssistant />
+          {mounted && user ? <GeminiAssistant /> : null}
         </QueryClientProvider>
       </body>
     </html>

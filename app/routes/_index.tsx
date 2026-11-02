@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs, MetaFunction } from '@remix-run/node'
 import { json } from '@remix-run/node'
-import { useLoaderData } from '@remix-run/react'
+import { useLoaderData, useNavigate } from '@remix-run/react'
 import * as React from 'react'
 import DashboardCharts from '~/components/DashboardCharts'
 import DeleteConfirmationDialog from '~/components/DeleteConfirmationDialog'
@@ -9,8 +9,11 @@ import Header from '~/components/Header'
 import SearchBar from '~/components/SearchBar'
 import SubscriptionGrid from '~/components/SubscriptionGrid'
 import Summary from '~/components/Summary'
+import UpcomingRenewals from '~/components/UpcomingRenewals'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
+import { monthlyEquivalent } from '~/lib/billing'
 import { getCacheHeaders, getCurrencyRates } from '~/services/currency.server'
+import useAuthStore from '~/store/authStore'
 import useSubscriptionStore, { type Subscription } from '~/store/subscriptionStore'
 import { usePreferencesStore } from '~/stores/preferences'
 
@@ -44,6 +47,15 @@ export default function Index() {
   const editSubscription = useSubscriptionStore((s) => s.editSubscription)
   const deleteSubscription = useSubscriptionStore((s) => s.deleteSubscription)
 
+  // Session lives in localStorage, so the gate can only run after hydration.
+  const navigate = useNavigate()
+  const authUser = useAuthStore((s) => s.user)
+  const [mounted, setMounted] = React.useState(false)
+  React.useEffect(() => setMounted(true), [])
+  React.useEffect(() => {
+    if (mounted && !authUser) navigate('/login', { replace: true })
+  }, [mounted, authUser, navigate])
+
   const [query, setQuery] = React.useState('')
   const [isEditOpen, setIsEditOpen] = React.useState(false)
   const [editingSubscription, setEditingSubscription] = React.useState<Subscription | null>(null)
@@ -62,7 +74,8 @@ export default function Index() {
   const totals = React.useMemo(() => {
     const map: Record<string, number> = {}
     for (const s of subscriptions) {
-      map[s.currency] = (map[s.currency] || 0) + s.price
+      const monthly = monthlyEquivalent(s.price, s.billingCycle ?? 'monthly')
+      map[s.currency] = (map[s.currency] || 0) + monthly
     }
     return map
   }, [subscriptions])
@@ -103,6 +116,14 @@ export default function Index() {
   }
 
   const [view, setView] = React.useState<'dashboard' | 'home'>('home')
+
+  if (!mounted || !authUser) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-sm text-muted-foreground">Loading…</div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -169,6 +190,7 @@ export default function Index() {
 
             <div className="space-y-4">
               <Summary totals={totals} />
+              <UpcomingRenewals subscriptions={subscriptions} />
               <SearchBar onSearch={handleSearch} />
               <SubscriptionGrid
                 subscriptions={filteredSubscriptions}

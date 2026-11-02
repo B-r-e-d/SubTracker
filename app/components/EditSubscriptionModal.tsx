@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '~/components/u
 import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
+import { BILLING_CYCLES, CYCLE_LABEL, DEFAULT_CYCLE, toISODate } from '~/lib/billing'
 import type { loader } from '~/routes/_index'
 import type { Subscription } from '~/store/subscriptionStore'
 import { IconUrlInput } from './IconFinder'
@@ -27,6 +28,8 @@ const subscriptionSchema = z.object({
   currency: z.string().min(1, 'Currency is required'),
   domain: z.string().url('Invalid URL'),
   icon: z.string().optional(),
+  billingCycle: z.enum(['weekly', 'monthly', 'quarterly', 'yearly']),
+  nextRenewal: z.string().optional(),
 })
 
 const EditSubscriptionModal: React.FC<EditSubscriptionModalProps> = ({
@@ -52,12 +55,18 @@ const EditSubscriptionModal: React.FC<EditSubscriptionModalProps> = ({
       currency: 'USD',
       domain: '',
       icon: '',
+      billingCycle: DEFAULT_CYCLE,
+      nextRenewal: toISODate(new Date()),
     },
   })
 
   useEffect(() => {
     if (editingSubscription) {
-      reset(editingSubscription)
+      reset({
+        ...editingSubscription,
+        billingCycle: editingSubscription.billingCycle ?? DEFAULT_CYCLE,
+        nextRenewal: editingSubscription.nextRenewal ?? '',
+      })
     } else {
       reset({
         name: '',
@@ -65,6 +74,8 @@ const EditSubscriptionModal: React.FC<EditSubscriptionModalProps> = ({
         currency: 'USD',
         domain: '',
         icon: '',
+        billingCycle: DEFAULT_CYCLE,
+        nextRenewal: toISODate(new Date()),
       })
     }
   }, [editingSubscription, reset])
@@ -78,6 +89,8 @@ const EditSubscriptionModal: React.FC<EditSubscriptionModalProps> = ({
     currency: watchedFields.currency || 'USD',
     domain: watchedFields.domain || 'https://example.com',
     icon: watchedFields.icon,
+    billingCycle: watchedFields.billingCycle || DEFAULT_CYCLE,
+    nextRenewal: watchedFields.nextRenewal || undefined,
   }
 
   const onSubmit = (data: Omit<Subscription, 'id'>) => {
@@ -154,6 +167,37 @@ const EditSubscriptionModal: React.FC<EditSubscriptionModalProps> = ({
                 <p className="text-red-500 text-xs h-4">
                   {errors.price?.message || errors.currency?.message || '\u00A0'}
                 </p>
+              </div>
+              <div className="flex items-start space-x-2">
+                <div className="flex-1">
+                  <Label htmlFor="billingCycle">Billing cycle</Label>
+                  <Controller
+                    name="billingCycle"
+                    control={control}
+                    render={({ field }) => (
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <SelectTrigger id="billingCycle">
+                          <SelectValue placeholder="Cycle" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {BILLING_CYCLES.map((cycle) => (
+                            <SelectItem key={cycle} value={cycle}>
+                              {CYCLE_LABEL[cycle]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  />
+                </div>
+                <div className="flex-1">
+                  <Label htmlFor="nextRenewal">Next renewal</Label>
+                  <Controller
+                    name="nextRenewal"
+                    control={control}
+                    render={({ field }) => <Input id="nextRenewal" type="date" {...field} value={field.value ?? ''} />}
+                  />
+                </div>
               </div>
               <div>
                 <Label htmlFor="domain">Domain</Label>

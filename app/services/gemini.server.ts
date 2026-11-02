@@ -1,11 +1,12 @@
-import { type GenerationConfig, GoogleGenerativeAI, SchemaType } from '@google/generative-ai'
+import { type Content, type GenerationConfig, GoogleGenerativeAI, SchemaType } from '@google/generative-ai'
 
 /**
  * Environment
  */
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
-const GEMINI_CHAT_MODEL = process.env.GEMINI_CHAT_MODEL || 'gemini-1.5-pro'
-const GEMINI_SUGGEST_MODEL = process.env.GEMINI_SUGGEST_MODEL || 'gemini-1.5-flash'
+// gemini-1.5-* were retired by Google; 2.5-flash is the current stable default.
+const GEMINI_CHAT_MODEL = process.env.GEMINI_CHAT_MODEL || 'gemini-2.5-flash'
+const GEMINI_SUGGEST_MODEL = process.env.GEMINI_SUGGEST_MODEL || 'gemini-2.5-flash'
 
 if (!GEMINI_API_KEY) {
   throw new Error(
@@ -14,6 +15,15 @@ if (!GEMINI_API_KEY) {
 }
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY)
+
+/**
+ * Gemini 2.5 models spend part of the output budget on internal "thinking" tokens.
+ * `thinkingConfig` is not in the SDK 0.21 type definitions but is forwarded to the
+ * API verbatim, so we widen the type rather than dropping the setting.
+ */
+type GenerationConfigWithThinking = GenerationConfig & {
+  thinkingConfig?: { thinkingBudget: number }
+}
 
 /**
  * Types
@@ -144,6 +154,89 @@ function withTimeout<T>(promise: Promise<T>, ms = DEFAULT_TIMEOUT_MS): Promise<T
   ])
 }
 
+/**
+ * Gemini returns 503 "model is experiencing high demand" fairly often, and 429 when
+ * rate limited. Both are transient, so retry with a short linear backoff instead of
+ * surfacing a failure to the user on the first attempt.
+ */
+function isRetryable(error: unknown): boolean {
+  const message = String((error as Error)?.message || error)
+  return /\b(429|500|502|503|504)\b|overloaded|high demand|temporarily|try again/i.test(message)
+}
+
+async function withRetry<T>(fn: () => Promise<T>, attempts = 3, baseDelayMs = 700): Promise<T> {
+  let lastError: unknown
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error
+      const timedOut = (error as TimeoutError)?.code === 'TIMEOUT'
+      if (timedOut || !isRetryable(error) || attempt === attempts - 1) throw error
+      await new Promise((resolve) => setTimeout(resolve, baseDelayMs * (attempt + 1)))
+    }
+  }
+  throw lastError
+}
+
+/**
+ * Free-tier keys are rate limited per model, and models get retired or overloaded.
+ * Walk a chain of models so one exhausted model does not take the feature down.
+ * Override with GEMINI_MODEL_CHAIN="model-a,model-b".
+ */
+const MODEL_CHAIN: string[] = (
+  process.env.GEMINI_MODEL_CHAIN || [GEMINI_CHAT_MODEL, GEMINI_SUGGEST_MODEL, 'gemini-3.1-flash-lite'].join(',')
+)
+  .split(',')
+  .map((m) => m.trim())
+  .filter(Boolean)
+  .filter((m, i, arr) => arr.indexOf(m) === i)
+
+/** Per-model ceiling, so one slow model cannot consume the whole request budget. */
+const PER_MODEL_TIMEOUT_MS = 25_000
+
+async function runGenerate(
+  contents: Content[],
+  generationConfig: GenerationConfigWithThinking,
+  systemInstruction?: string,
+) {
+  let lastError: unknown
+  const tried: string[] = []
+  const startedAt = Date.now()
+  const TOTAL_BUDGET_MS = 50_000
+
+  for (const modelName of MODEL_CHAIN) {
+    tried.push(modelName)
+    const model = genAI.getGenerativeModel({
+      model: modelName,
+      ...(systemInstruction ? { systemInstruction } : {}),
+    })
+    try {
+      return await withTimeout(
+        withRetry(() => model.generateContent({ contents, generationConfig }), 2, 600),
+        PER_MODEL_TIMEOUT_MS,
+      )
+    } catch (error) {
+      lastError = error
+      const timedOut = (error as TimeoutError)?.code === 'TIMEOUT'
+      const message = String((error as Error)?.message || error)
+      // A 404 means the model was retired; 429 means this model's quota is spent;
+      // a timeout means it is too slow right now. All are per-model, so move on.
+      const modelSpecific = /\b(404|429)\b|quota|no longer available|not found/i.test(message)
+      if (!timedOut && !modelSpecific && !isRetryable(error)) throw error
+      console.warn(`[gemini] ${modelName} unusable, falling back: ${message.slice(0, 120)}`)
+      // Stop burning the caller's patience once the overall budget is spent.
+      if (Date.now() - startedAt > TOTAL_BUDGET_MS) break
+    }
+  }
+
+  const err = new Error(
+    `All Gemini models failed (${tried.join(', ')}). Last error: ${(lastError as Error)?.message ?? 'unknown'}`,
+  ) as TimeoutError
+  err.code = 'MODEL_ERROR'
+  throw err
+}
+
 interface UsageMetadata {
   inputTokenCount?: number
   promptTokenCount?: number
@@ -246,25 +339,17 @@ export async function geminiChat(messages: ChatMessage[], context?: ChatContext)
     parts: [{ text: trimText(m.content) }],
   }))
 
-  const generationConfig: GenerationConfig = {
+  const generationConfig: GenerationConfigWithThinking = {
     temperature: 0.6,
     topK: 40,
     topP: 0.95,
-    maxOutputTokens: 2048,
+    maxOutputTokens: 4096,
+    // Chat is interactive, so skip reasoning tokens for snappy replies.
+    thinkingConfig: { thinkingBudget: 0 },
   }
 
-  const model = genAI.getGenerativeModel({
-    model: GEMINI_CHAT_MODEL,
-    ...(systemInstruction ? { systemInstruction } : {}),
-  })
-
   try {
-    const result = await withTimeout(
-      model.generateContent({
-        contents,
-        generationConfig,
-      }),
-    )
+    const result = await runGenerate(contents, generationConfig, systemInstruction)
 
     const text = result?.response?.text?.() ?? ''
     const cand0 = result?.response?.candidates?.[0]
@@ -306,11 +391,16 @@ export async function geminiSuggestions(
     throw err
   }
 
-  const generationConfig: GenerationConfig = {
+  const generationConfig: GenerationConfigWithThinking = {
     temperature: 0.2,
     topK: 20,
     topP: 0.9,
-    maxOutputTokens: 1024,
+    // Thinking tokens count against this budget, so keep it generous enough for the
+    // JSON payload. At 1024 the response was truncated mid-JSON.
+    maxOutputTokens: 4096,
+    // Reasoning made this call take ~20s; the strict response schema keeps output
+    // well-formed without it.
+    thinkingConfig: { thinkingBudget: 0 },
     responseMimeType: 'application/json',
     responseSchema: {
       type: SchemaType.OBJECT,
@@ -361,15 +451,13 @@ export async function geminiSuggestions(
     },
   }
 
-  const model = genAI.getGenerativeModel({
-    model: GEMINI_SUGGEST_MODEL,
-    systemInstruction: [
-      'You are a subscription optimization assistant.',
-      'Produce concise, deterministic suggestions strictly following the provided JSON schema.',
-      'Never include fields not defined in the schema.',
-      'Ground all suggestions in the provided subscriptions snapshot only.',
-    ].join('\n'),
-  })
+  const suggestSystemInstruction = [
+    'You are a subscription optimization assistant.',
+    'Produce concise, deterministic suggestions strictly following the provided JSON schema.',
+    'Never include fields not defined in the schema.',
+    'Ground all suggestions in the provided subscriptions snapshot only.',
+    'Amounts are per billing cycle; use billingCycle to reason about real monthly cost.',
+  ].join('\n')
 
   const payload = {
     snapshot: sanitized,
@@ -396,11 +484,10 @@ export async function geminiSuggestions(
   ].join('\n')
 
   try {
-    const result = await withTimeout(
-      model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: trimText(userPrompt, 20_000) }] }],
-        generationConfig,
-      }),
+    const result = await runGenerate(
+      [{ role: 'user', parts: [{ text: trimText(userPrompt, 20_000) }] }],
+      generationConfig,
+      suggestSystemInstruction,
     )
 
     interface ParsedResponse {

@@ -11,6 +11,7 @@ import { Textarea } from '~/components/ui/textarea'
 
 import { useToast } from '~/hooks/use-toast'
 import { useTypewriterMarkdown } from '~/hooks/useTypewriterMarkdown'
+import { monthlyEquivalent } from '~/lib/billing'
 import useSubscriptionStore from '~/store/subscriptionStore'
 import { usePreferencesStore } from '~/stores/preferences'
 
@@ -67,8 +68,15 @@ const MAX_SUBS = 200
  *   Otherwise, aggregate the remainder into: { name: "Other (n)", amount: sum, currency: "[varies]" }.
  */
 function buildSubscriptionsSnapshot(
-  subs: Array<{ id: string; name: string; price: number; currency: string }>,
-): Array<{ name: string; amount: number; currency: string }> {
+  subs: Array<{
+    id: string
+    name: string
+    price: number
+    currency: string
+    billingCycle?: string
+    nextRenewal?: string
+  }>,
+): Array<{ name: string; amount: number; currency: string; cycle: string; monthly: number; nextRenewal?: string }> {
   if (!Array.isArray(subs) || subs.length === 0) return []
   const trim = (s: string) => (typeof s === 'string' && s.length > 60 ? s.slice(0, 60) : String(s || ''))
   const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100
@@ -77,6 +85,10 @@ function buildSubscriptionsSnapshot(
     name: trim(s.name),
     amount: round2(s.price),
     currency: String(s.currency || ''),
+    // Without the cycle the model compares a yearly price against a monthly one.
+    cycle: s.billingCycle || 'monthly',
+    monthly: round2(monthlyEquivalent(Number(s.price) || 0, (s.billingCycle as never) || 'monthly')),
+    ...(s.nextRenewal ? { nextRenewal: s.nextRenewal } : {}),
   }))
 
   if (subs.length <= 50) return first
@@ -87,7 +99,10 @@ function buildSubscriptionsSnapshot(
   if (remainderCurrencies.size > 1) return first
 
   const sum = round2(remainder.reduce((acc, s) => acc + (Number(s.price) || 0), 0))
-  return [...first, { name: `Other (${remainder.length})`, amount: sum, currency: '[varies]' }]
+  return [
+    ...first,
+    { name: `Other (${remainder.length})`, amount: sum, currency: '[varies]', cycle: 'mixed', monthly: 0 },
+  ]
 }
 
 const BASE_SYSTEM_PROMPT = [
@@ -97,6 +112,7 @@ const BASE_SYSTEM_PROMPT = [
   '- Be concise and actionable. When appropriate, use Markdown formatting (bold, lists, tables, code blocks).',
   '- Never claim access to bank accounts, emails, or external services. You only see what the user shares.',
   '- When asked about subscriptions, use the ‘Subscriptions snapshot’ provided in the system context to answer directly. If the snapshot is absent, gracefully state that no subscription data is available.',
+  '- In the snapshot, `amount` is the price charged per billing `cycle`, while `monthly` is that price normalised to a monthly figure. Always compare subscriptions using `monthly`, never raw `amount`, because yearly and quarterly plans are not directly comparable.',
   '- Prefer short checklists and clear next steps. Avoid hallucinating subscription entries.',
   'Formatting:',
   '- Use **bold** for key figures, bullet lists for steps, and backticks for short inline terms.',
@@ -136,17 +152,20 @@ function formatAmount(amount: number, currency?: string): string {
 }
 
 function synthesizeFallbackSuggestions(
-  subsInput: Array<{ id: string; name: string; price: number; currency: string }>,
+  subsInput: Array<{ id: string; name: string; price: number; currency: string; billingCycle?: string }>,
   limit = 3,
 ): SuggestionItem[] {
   const safeSubs = Array.isArray(subsInput) ? subsInput.slice() : []
-  safeSubs.sort((a, b) => (Number(b.price) || 0) - (Number(a.price) || 0))
+  // Rank by monthly cost, not raw price, so a yearly plan is not treated as a huge monthly bill.
+  const monthlyOf = (s: { price: number; billingCycle?: string }) =>
+    monthlyEquivalent(Number(s.price) || 0, (s.billingCycle as never) || 'monthly')
+  safeSubs.sort((a, b) => monthlyOf(b) - monthlyOf(a))
   const pick = safeSubs.slice(0, Math.max(0, Math.min(limit, 3)))
 
   const items: SuggestionItem[] = pick.map((s) => ({
     type: 'optimize',
     title: `Review ${s.name}`,
-    description: `Consider optimizing ${s.name} which costs ${formatAmount(s.price, s.currency)}/mo.`,
+    description: `Consider optimizing ${s.name}, which costs ${formatAmount(monthlyOf(s), s.currency)}/mo.`,
     targetIds: [String(s.id)],
     confidence: 0.7,
     actions: [],
@@ -233,7 +252,7 @@ export default function GeminiAssistant() {
   const { toast } = useToast()
 
   const [open, setOpen] = React.useState(false)
-  const [activeTab, setActiveTab] = React.useState<'chat'>('chat')
+  const [activeTab, setActiveTab] = React.useState<'chat' | 'suggestions'>('chat')
 
   const fabRef = React.useRef<HTMLButtonElement | null>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null)
@@ -338,13 +357,29 @@ export default function GeminiAssistant() {
 
     // Compose a system instruction so the model behaves like a dashboard assistant and uses Markdown
     interface StoreWithGetState {
-      getState?: () => { subscriptions: Array<{ id: string; name: string; price: number; currency: string }> }
+      getState?: () => {
+        subscriptions: Array<{
+          id: string
+          name: string
+          price: number
+          currency: string
+          billingCycle?: string
+          nextRenewal?: string
+        }>
+      }
     }
     const subsStatic = (
       typeof (useSubscriptionStore as StoreWithGetState)?.getState === 'function'
         ? (useSubscriptionStore as StoreWithGetState).getState?.().subscriptions
         : subs
-    ) as Array<{ id: string; name: string; price: number; currency: string }>
+    ) as Array<{
+      id: string
+      name: string
+      price: number
+      currency: string
+      billingCycle?: string
+      nextRenewal?: string
+    }>
 
     const snapshot = buildSubscriptionsSnapshot(Array.isArray(subsStatic) ? subsStatic : [])
     const instrParts: string[] = [
@@ -441,6 +476,7 @@ export default function GeminiAssistant() {
           name: s.name,
           price: Number(s.price),
           currency: String(s.currency || ''),
+          billingCycle: s.billingCycle,
         })),
         3,
       )
@@ -456,12 +492,13 @@ export default function GeminiAssistant() {
     const sanitized = (Array.isArray(subs) ? subs : []).slice(0, MAX_SUBS).map((s) => ({
       id: String(s.id),
       name: s.name,
-      // Store does not have these fields; provide safe defaults
+      // The store has no category field yet, so everything is grouped as misc.
       category: 'misc',
       amount: Number(s.price),
       currency: s.currency,
-      billingCycle: 'monthly',
-      nextPaymentDate: new Date().toISOString().slice(0, 10), // ISO date (YYYY-MM-DD)
+      billingCycle: s.billingCycle ?? 'monthly',
+      // Pass the real renewal date so suggestions can reason about timing.
+      nextPaymentDate: s.nextRenewal || new Date().toISOString().slice(0, 10),
       isActive: true,
     }))
 
@@ -480,6 +517,7 @@ export default function GeminiAssistant() {
           name: s.name,
           price: Number(s.price),
           currency: String(s.currency || ''),
+          billingCycle: s.billingCycle,
         })),
         3,
       )
@@ -528,6 +566,16 @@ export default function GeminiAssistant() {
       setIsLoadingSuggestions(false)
     }
   }, [isLoadingSuggestions, subs, selectedCurrency, locale, timezone, toast])
+
+  // Kick off a review the first time the Suggestions tab is opened. The ref guard
+  // stops it retrying in a loop if the request fails.
+  const autoSuggestRef = React.useRef(false)
+  React.useEffect(() => {
+    if (open && activeTab === 'suggestions' && !autoSuggestRef.current) {
+      autoSuggestRef.current = true
+      void generateSuggestions()
+    }
+  }, [open, activeTab, generateSuggestions])
 
   function runSuggestion(sug: SuggestionItem) {
     const prompt = buildPromptFromSuggestion(
@@ -692,9 +740,15 @@ export default function GeminiAssistant() {
                 </div>
               </div>
               <div className="mt-3">
-                <Tabs defaultValue="chat" value={activeTab} className="w-full">
-                  <TabsList className="grid w-full grid-cols-1">
+                <Tabs
+                  defaultValue="chat"
+                  value={activeTab}
+                  onValueChange={(v) => setActiveTab(v as 'chat' | 'suggestions')}
+                  className="w-full"
+                >
+                  <TabsList className="grid w-full grid-cols-2">
                     <TabsTrigger value="chat">Chat</TabsTrigger>
+                    <TabsTrigger value="suggestions">Suggestions</TabsTrigger>
                   </TabsList>
                 </Tabs>
               </div>
@@ -703,7 +757,7 @@ export default function GeminiAssistant() {
             <div className="flex-1 min-h-0 overflow-hidden px-3 pb-3">
               <Tabs value={activeTab} className="h-full min-h-0">
                 {/* Chat Tab */}
-                <TabsContent value="chat" className="mt-2 h-full min-h-0 flex flex-col">
+                <TabsContent value="chat" className="mt-2 h-full min-h-0 flex flex-col data-[state=inactive]:hidden">
                   <div
                     ref={listRef}
                     className="flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-3 pr-2"
@@ -827,6 +881,91 @@ export default function GeminiAssistant() {
                         )}
                       </Button>
                     </div>
+                  </div>
+                </TabsContent>
+
+                {/* Suggestions Tab */}
+                <TabsContent
+                  value="suggestions"
+                  className="mt-2 h-full min-h-0 flex flex-col data-[state=inactive]:hidden"
+                >
+                  <div className="flex items-center justify-between gap-2 pb-2">
+                    <p className="text-xs text-muted-foreground">
+                      {isLoadingSuggestions ? 'Analysing your subscriptions…' : 'AI review of your spending'}
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void generateSuggestions()}
+                      disabled={isLoadingSuggestions}
+                    >
+                      {isLoadingSuggestions ? 'Working…' : suggestions.length ? 'Refresh' : 'Generate'}
+                    </Button>
+                  </div>
+
+                  <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-3 pr-2">
+                    {summary ? (
+                      <p className="text-sm text-foreground bg-muted/60 border border-border/50 rounded-lg px-3 py-2 leading-relaxed">
+                        {summary}
+                      </p>
+                    ) : null}
+
+                    {suggestions.length === 0 && isLoadingSuggestions ? (
+                      <div className="flex flex-col items-center justify-center h-full text-center px-4 space-y-2">
+                        <SparkleIcon className="h-12 w-12 text-muted-foreground/50 animate-pulse" />
+                        <p className="text-sm text-muted-foreground">Generating suggestions…</p>
+                        <p className="text-xs text-muted-foreground/70">This usually takes a few seconds.</p>
+                      </div>
+                    ) : null}
+
+                    {suggestions.length === 0 && !isLoadingSuggestions ? (
+                      <div className="flex flex-col items-center justify-center h-full text-center px-4 space-y-2">
+                        <SparkleIcon className="h-12 w-12 text-muted-foreground/50" />
+                        <p className="text-sm text-muted-foreground">No suggestions yet.</p>
+                        <p className="text-xs text-muted-foreground/70">
+                          Generate a review of your subscriptions to spot savings.
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {suggestions.map((sug, idx) => {
+                      const impact = getImpactLabel(sug)
+                      const conf = getConfidenceLabel(sug)
+                      return (
+                        <div
+                          key={`sug-${idx}-${sug.title.slice(0, 16)}`}
+                          className="rounded-xl border border-border/50 bg-gradient-to-br from-muted to-muted/50 p-3 shadow-sm"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm font-medium text-foreground">{sug.title}</p>
+                            {conf ? (
+                              <span className="shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground border border-border/60 rounded px-1.5 py-0.5">
+                                {conf}
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{sug.description}</p>
+                          {impact ? (
+                            <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 mt-2">{impact}</p>
+                          ) : null}
+                          <div className="flex flex-wrap gap-2 mt-3">
+                            <Button size="sm" variant="secondary" onClick={() => runSuggestion(sug)}>
+                              Ask about this
+                            </Button>
+                            {(sug.actions ?? []).slice(0, 2).map((action, i) => (
+                              <Button
+                                key={`act-${i}-${action.label}`}
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleSuggestionAction(sug, action)}
+                              >
+                                {action.label}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 </TabsContent>
               </Tabs>
